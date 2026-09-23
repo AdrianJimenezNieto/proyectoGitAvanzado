@@ -1,0 +1,33 @@
+name: Comparar secret y variable local
+
+on: push
+
+jobs:
+  comparar:
+    runs-on: self-hosted
+    steps:
+      - name: DEV_TOKEN frente a LOCAL_DEV_TOKEN
+        shell: powershell
+        env:
+          SECRET_DEV_TOKEN: ${{ secrets.DEV_TOKEN }}
+        run: |
+          $secret = $env:SECRET_DEV_TOKEN
+          $local = $env:LOCAL_DEV_TOKEN
+
+          if ([string]::IsNullOrEmpty($secret)) {
+            Write-Host "El secret DEV_TOKEN no llega al job."
+            exit 1
+          }
+          if ([string]::IsNullOrEmpty($local)) {
+            Write-Host "La variable LOCAL_DEV_TOKEN no existe en el runner."
+            Write-Host "El runner solo ve las variables que ya existian cuando arranco: reinicialo."
+            exit 1
+          }
+
+          if ($secret -ceq $local) {
+            Write-Host "COINCIDEN: el secret DEV_TOKEN y la variable local LOCAL_DEV_TOKEN tienen el mismo valor."
+            exit 0
+          }
+
+          Write-Host "NO COINCIDEN: el secret DEV_TOKEN y la variable local LOCAL_DEV_TOKEN son distintos."
+          exit 1
