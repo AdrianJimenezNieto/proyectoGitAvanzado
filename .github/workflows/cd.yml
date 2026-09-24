@@ -1,0 +1,81 @@
+name: CD
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+    # El commit del README que sube el propio workflow no vuelve a dispararlo
+    paths-ignore:
+      - README.md
+  workflow_dispatch:
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v4
+        with:
+          # main está protegida: el GITHUB_TOKEN no puede subir a ella, el token del owner sí
+          token: ${{ github.event_name == 'pull_request' && github.token || secrets.README_TOKEN }}
+
+      - name: Subir la versión en el README
+        id: version
+        run: |
+          linea=$(grep -m1 -E '^AppVersion-[0-9]+' README.md) || {
+            echo "README.md no tiene la línea AppVersion-N."
+            exit 1
+          }
+          n=$(echo "$linea" | sed -E 's/^AppVersion-([0-9]+).*/\1/')
+          nueva="AppVersion-$((n + 1)) · $(TZ=Europe/Madrid date '+%d/%m/%Y %H:%M')"
+          awk -v nueva="$nueva" '!hecho && /^AppVersion-[0-9]+/ { print nueva; hecho = 1; next } { print }' \
+            README.md > README.tmp && mv README.tmp README.md
+          echo "AppVersion-$n -> $nueva"
+          echo "version=AppVersion-$((n + 1))" >> "$GITHUB_OUTPUT"
+          git diff README.md
+
+      - name: Subir el README a main
+        # En un pull request el código es el merge provisional y no hay rama donde subirlo
+        if: github.event_name != 'pull_request'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Subir la versión a $VERSION"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
+  validate-prod:
+    needs: update-readme
+    runs-on: self-hosted
+    steps:
+      - name: PROD_TOKEN frente a LOCAL_PROD_TOKEN
+        shell: powershell
+        env:
+          SECRET_PROD_TOKEN: ${{ secrets.PROD_TOKEN }}
+        run: |
+          $secret = $env:SECRET_PROD_TOKEN
+          $local = $env:LOCAL_PROD_TOKEN
+
+          if ([string]::IsNullOrEmpty($secret)) {
+            Write-Host "El secret PROD_TOKEN no llega al job."
+            exit 1
+          }
+          if ([string]::IsNullOrEmpty($local)) {
+            Write-Host "La variable LOCAL_PROD_TOKEN no existe en el runner."
+            Write-Host "El runner solo ve las variables que ya existian cuando arranco: reinicialo."
+            exit 1
+          }
+
+          if ($secret -ceq $local) {
+            Write-Host "COINCIDEN: el secret PROD_TOKEN y la variable local LOCAL_PROD_TOKEN tienen el mismo valor."
+            exit 0
+          }
+
+          Write-Host "NO COINCIDEN: el secret PROD_TOKEN y la variable local LOCAL_PROD_TOKEN son distintos."
+          exit 1
